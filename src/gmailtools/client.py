@@ -7,7 +7,7 @@ batchModify, which is the cheap path for large queries.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from typing import Any
 
 from googleapiclient.discovery import Resource
@@ -78,8 +78,12 @@ def batch_modify(
     ids: list[str],
     add: list[str] | None = None,
     remove: list[str] | None = None,
+    progress: Callable[[], None] | None = None,
 ) -> None:
-    """Apply label add/remove to up to 1000 ids per call; chunks larger lists."""
+    """Apply label add/remove to up to 1000 ids per call; chunks larger lists.
+
+    If `progress` is given, it's invoked once after each chunk completes.
+    """
     if not ids:
         return
     body: dict[str, Any] = {}
@@ -93,9 +97,17 @@ def batch_modify(
             userId=USER,
             body={"ids": chunk, **body},
         ).execute()
+        if progress:
+            progress()
 
 
-def trash_messages(svc: Resource, ids: list[str]) -> None:
-    """No batch endpoint for trash; one call per id."""
+def trash_messages(
+    svc: Resource,
+    ids: list[str],
+    progress: Callable[[], None] | None = None,
+) -> None:
+    """No batch endpoint for trash; one call per id. `progress` fires per message."""
     for mid in ids:
         svc.users().messages().trash(userId=USER, id=mid).execute()
+        if progress:
+            progress()

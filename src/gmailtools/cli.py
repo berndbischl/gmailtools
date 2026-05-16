@@ -7,9 +7,29 @@ actually run. Queries use Gmail's standard search syntax
 
 from __future__ import annotations
 
+import click
 import typer
 
 from . import auth, client
+
+
+def _batch_modify_with_progress(
+    svc: object,
+    ids: list[str],
+    label: str,
+    add: list[str] | None = None,
+    remove: list[str] | None = None,
+) -> None:
+    """batch_modify wrapped in a click progressbar over 1000-id chunks."""
+    n_chunks = (len(ids) + 999) // 1000
+    with click.progressbar(length=n_chunks, label=label) as bar:
+        client.batch_modify(svc, ids, add=add, remove=remove, progress=lambda: bar.update(1))
+
+
+def _trash_with_progress(svc: object, ids: list[str], label: str = "trashing") -> None:
+    """trash_messages wrapped in a click progressbar (one tick per message)."""
+    with click.progressbar(length=len(ids), label=label) as bar:
+        client.trash_messages(svc, ids, progress=lambda: bar.update(1))
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
 label_app = typer.Typer(no_args_is_help=True, help="Add/remove labels in bulk.")
@@ -123,7 +143,7 @@ def label_add(
         return
     _confirm(yes, f"add label '{name}' to", len(ids))
     lid = _resolve_label(svc, name, create)
-    client.batch_modify(svc, ids, add=[lid])
+    _batch_modify_with_progress(svc, ids, f"adding {name}", add=[lid])
     typer.echo(f"added label '{name}' to {len(ids)} message(s)")
 
 
@@ -143,7 +163,7 @@ def label_remove(
     lid = client.label_id_by_name(svc, name)
     if not lid:
         raise typer.BadParameter(f"label '{name}' does not exist")
-    client.batch_modify(svc, ids, remove=[lid])
+    _batch_modify_with_progress(svc, ids, f"removing {name}", remove=[lid])
     typer.echo(f"removed label '{name}' from {len(ids)} message(s)")
 
 
@@ -172,7 +192,9 @@ def label_move(
     if not src_id:
         raise typer.BadParameter(f"source label '{src}' does not exist")
     dst_id = _resolve_label(svc, dst, create)
-    client.batch_modify(svc, ids, add=[dst_id], remove=[src_id])
+    _batch_modify_with_progress(
+        svc, ids, f"{src} → {dst}", add=[dst_id], remove=[src_id]
+    )
     typer.echo(f"moved {len(ids)} message(s) from '{src}' to '{dst}'")
 
 
@@ -188,7 +210,7 @@ def archive(
     if not ids:
         return
     _confirm(yes, "archive", len(ids))
-    client.batch_modify(svc, ids, remove=["INBOX"])
+    _batch_modify_with_progress(svc, ids, "archiving", remove=["INBOX"])
     typer.echo(f"archived {len(ids)} message(s)")
 
 
@@ -204,7 +226,7 @@ def trash(
     if not ids:
         return
     _confirm(yes, "trash", len(ids))
-    client.trash_messages(svc, ids)
+    _trash_with_progress(svc, ids)
     typer.echo(f"trashed {len(ids)} message(s)")
 
 
