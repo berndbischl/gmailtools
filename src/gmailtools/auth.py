@@ -1,15 +1,20 @@
 """OAuth flow + token caching for the Gmail API.
 
-Credentials and the cached token live under ~/.config/gmailtools/ so they
-stay out of the repo. credentials.json is the OAuth client (downloaded
-from Google Cloud Console once); token.json is the per-user refresh
-token written after the first browser consent.
+The OAuth client (Google's "credentials.json") is stored encrypted in
+`pass` under the entry `gmailtools/credentials`; `pass show` decrypts
+through gpg-agent (passphrase via pinentry) at runtime, plaintext never
+hits disk. The per-user refresh token lives at
+~/.config/gmailtools/token.json (0600), written after the first browser
+consent and auto-refreshed thereafter.
 """
 
 from __future__ import annotations
 
+import json
 import os
+import subprocess
 from pathlib import Path
+from typing import Any
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -21,8 +26,8 @@ from googleapiclient.discovery import Resource, build
 SCOPES = ["https://www.googleapis.com/auth/gmail.modify"]
 
 CONFIG_DIR = Path(os.environ.get("GMAILTOOLS_CONFIG_DIR", Path.home() / ".config" / "gmailtools"))
-CREDENTIALS_PATH = CONFIG_DIR / "credentials.json"
 TOKEN_PATH = CONFIG_DIR / "token.json"
+PASS_ENTRY = os.environ.get("GMAILTOOLS_PASS_ENTRY", "gmailtools/credentials")
 
 
 def _ensure_config_dir() -> None:
@@ -42,6 +47,21 @@ def _save_token(creds: Credentials) -> None:
     os.chmod(TOKEN_PATH, 0o600)
 
 
+def _load_client_config() -> dict[str, Any]:
+    """Decrypt the OAuth client JSON via `pass show` (gpg-agent will prompt)."""
+    try:
+        out = subprocess.check_output(["pass", "show", PASS_ENTRY], stderr=subprocess.PIPE)
+    except FileNotFoundError as e:
+        raise SystemExit(
+            "`pass` not found on PATH. Install pass and store the OAuth client as "
+            f"'{PASS_ENTRY}' (see README)."
+        ) from e
+    except subprocess.CalledProcessError as e:
+        msg = e.stderr.decode("utf-8", "replace").strip() or f"exit {e.returncode}"
+        raise SystemExit(f"`pass show {PASS_ENTRY}` failed: {msg}") from e
+    return json.loads(out)
+
+
 def get_credentials() -> Credentials:
     creds = _load_token()
     if creds and creds.valid:
@@ -50,12 +70,7 @@ def get_credentials() -> Credentials:
         creds.refresh(Request())
         _save_token(creds)
         return creds
-    if not CREDENTIALS_PATH.exists():
-        raise SystemExit(
-            f"Missing OAuth client at {CREDENTIALS_PATH}. "
-            "See README for the one-time Google Cloud setup."
-        )
-    flow = InstalledAppFlow.from_client_secrets_file(str(CREDENTIALS_PATH), SCOPES)
+    flow = InstalledAppFlow.from_client_config(_load_client_config(), SCOPES)
     creds = flow.run_local_server(port=0)
     _save_token(creds)
     return creds

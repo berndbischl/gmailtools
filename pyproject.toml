@@ -2,21 +2,29 @@
 name = "gmailtools"
 version = "0.1.0"
 description = "Personal Gmail CLI: search, label, archive, trash via the Gmail API."
+# 3.11 is the floor: gives us PEP 604 unions, `Self`, and tomllib in stdlib.
 requires-python = ">=3.11"
 dependencies = [
+    # Official Gmail API client (discovery-based wrapper around the REST API).
     "google-api-python-client>=2.130",
+    # User-consent OAuth 2.0 flow — needed because Gmail scopes are per-user, not service-account.
     "google-auth-oauthlib>=1.2",
+    # httplib2 transport adapter the google-api client expects for authed requests.
     "google-auth-httplib2>=0.2",
+    # CLI framework (argparse + type hints + help generation).
     "typer>=0.12",
 ]
 
+# Installs a `gmt` console script pointing at the Typer app.
 [project.scripts]
 gmt = "gmailtools.cli:app"
 
+# Hatchling: minimal PEP 517 build backend, no setuptools baggage.
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+# src/ layout — ensures tests import the installed package, not the working tree.
 [tool.hatch.build.targets.wheel]
 packages = ["src/gmailtools"]
 

@@ -59,6 +59,46 @@ def labels() -> None:
         typer.echo(f"{lbl['id']:20} {lbl['name']}")
 
 
+# System labels worth surfacing in the overview. Gmail also exposes
+# CATEGORY_* and CHAT, but those are noise for an account summary.
+_OVERVIEW_SYSTEM_LABELS = ["INBOX", "UNREAD", "STARRED", "IMPORTANT", "SENT", "DRAFT", "SPAM", "TRASH"]
+
+
+@app.command()
+def overview(
+    top: int = typer.Option(
+        10, help="Show the N largest user labels by message count (0 to skip)."
+    ),
+) -> None:
+    """Read-only summary of the account: totals, system labels, user labels."""
+    svc = auth.service()
+    prof = client.get_profile(svc)
+    typer.echo(f"account:  {prof.get('emailAddress', '?')}")
+    typer.echo(f"messages: {int(prof.get('messagesTotal', 0)):>10,}")
+    typer.echo(f"threads:  {int(prof.get('threadsTotal', 0)):>10,}")
+
+    typer.echo("\nsystem labels:")
+    for lid in _OVERVIEW_SYSTEM_LABELS:
+        lbl = client.get_label(svc, lid)
+        total = int(lbl.get("messagesTotal", 0))
+        unread = int(lbl.get("messagesUnread", 0))
+        typer.echo(f"  {lid:10} total {total:>8,}   unread {unread:>6,}")
+
+    all_labels = client.list_labels(svc)
+    user_labels = [lbl for lbl in all_labels if lbl.get("type") == "user"]
+    typer.echo(f"\nuser labels: {len(user_labels)}")
+
+    if top > 0 and user_labels:
+        # Per-label .get() is one API call each — cheap for typical label counts.
+        sized = [(lbl["name"], client.get_label(svc, lbl["id"])) for lbl in user_labels]
+        sized.sort(key=lambda x: int(x[1].get("messagesTotal", 0)), reverse=True)
+        typer.echo(f"  top {min(top, len(sized))} by message count:")
+        for name, lbl in sized[:top]:
+            total = int(lbl.get("messagesTotal", 0))
+            unread = int(lbl.get("messagesUnread", 0))
+            typer.echo(f"    {name:30.30}  total {total:>8,}   unread {unread:>6,}")
+
+
 def _resolve_label(svc, name: str, create_if_missing: bool) -> str:
     lid = client.label_id_by_name(svc, name)
     if lid:

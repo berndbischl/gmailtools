@@ -13,7 +13,6 @@ Each item is tagged by audience:
 - `PLAN.md` **(claude-facing)** — open follow-ups and deferred discussions. Read at the start of any non-trivial work. **Human does not modify**.
 - `README.md` **(human-facing)** — repo entry point.
 - `PYTHON_STYLE.md` **(claude-facing)** — style Claude follows when writing Python code in this project.
-- `SCRIPT_AND_CONFIG_STYLE.md` **(claude-facing)** — documentation style Claude follows when writing scripts/configs.
 - `TODO.md` **(human-facing)** — operator's personal scratch list. **Don't modify, don't reference, don't read proactively.**
 
 

@@ -47,6 +47,16 @@ def get_message_meta(svc: Resource, msg_id: str) -> dict[str, Any]:
     ).execute()
 
 
+def get_profile(svc: Resource) -> dict[str, Any]:
+    """Account-level totals: emailAddress, messagesTotal, threadsTotal, historyId."""
+    return svc.users().getProfile(userId=USER).execute()
+
+
+def get_label(svc: Resource, label_id: str) -> dict[str, Any]:
+    """Per-label counts (messagesTotal, messagesUnread, threadsTotal, threadsUnread)."""
+    return svc.users().labels().get(userId=USER, id=label_id).execute()
+
+
 def list_labels(svc: Resource) -> list[dict[str, Any]]:
     return svc.users().labels().list(userId=USER).execute().get("labels", [])
 
