@@ -147,6 +147,35 @@ def label_remove(
     typer.echo(f"removed label '{name}' from {len(ids)} message(s)")
 
 
+@label_app.command("move")
+def label_move(
+    src: str = typer.Argument(..., help="Source label to remove."),
+    dst: str = typer.Argument(..., help="Destination label to add."),
+    query: str | None = typer.Option(
+        None, "--query", "-q", help="Extra filter; ANDed with label:<src>."
+    ),
+    create: bool = typer.Option(False, help="Create destination label if missing."),
+    limit: int | None = typer.Option(None, help="Cap number of messages affected."),
+    yes: bool = typer.Option(False, "--yes", help="Actually perform the change."),
+) -> None:
+    """Move messages: add dst label, remove src label, in one batchModify per chunk.
+
+    Match scope defaults to `label:<src>`; --query is ANDed onto it.
+    """
+    scope = f"label:{src}" + (f" ({query})" if query else "")
+    ids, svc = _collect(scope, limit)
+    _preview(svc, ids)
+    if not ids:
+        return
+    _confirm(yes, f"move from '{src}' to '{dst}' on", len(ids))
+    src_id = client.label_id_by_name(svc, src)
+    if not src_id:
+        raise typer.BadParameter(f"source label '{src}' does not exist")
+    dst_id = _resolve_label(svc, dst, create)
+    client.batch_modify(svc, ids, add=[dst_id], remove=[src_id])
+    typer.echo(f"moved {len(ids)} message(s) from '{src}' to '{dst}'")
+
+
 @app.command()
 def archive(
     query: str = typer.Option(..., "--query", "-q", help="Gmail search query."),

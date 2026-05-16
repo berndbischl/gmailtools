@@ -1,11 +1,20 @@
-"""OAuth flow + token caching for the Gmail API.
+"""OAuth flow + token storage for the Gmail API.
 
-The OAuth client (Google's "credentials.json") is stored encrypted in
-`pass` under the entry `gmailtools/credentials`; `pass show` decrypts
-through gpg-agent (passphrase via pinentry) at runtime, plaintext never
-hits disk. The per-user refresh token lives at
-~/.config/gmailtools/token.json (0600), written after the first browser
-consent and auto-refreshed thereafter.
+Both secrets live encrypted in `pass`; nothing sensitive is on disk
+plaintext:
+
+- `gmailtools/credentials` — the OAuth client JSON (static, identifies
+  the app to Google). Read on first consent only.
+- `gmailtools/token` — the per-user token bundle (refresh_token,
+  access_token, client_id, client_secret, scopes, expiry). Read on
+  every `gmt` run; rewritten on every access-token refresh.
+
+`pass show` triggers gpg-agent → pinentry; with TTL=0 every read
+prompts for the passphrase. Writes (`pass insert`) only need the public
+key, so they're silent.
+
+Override entry names with `$GMAILTOOLS_PASS_ENTRY` (client) and
+`$GMAILTOOLS_TOKEN_PASS_ENTRY` (token).
 """
 
 from __future__ import annotations
@@ -13,7 +22,6 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-from pathlib import Path
 from typing import Any
 
 from google.auth.transport.requests import Request
@@ -25,40 +33,62 @@ from googleapiclient.discovery import Resource, build
 # It does NOT cover permanent delete — that needs the full mail.google.com scope.
 SCOPES = ["https://www.googleapis.com/auth/gmail.modify"]
 
-CONFIG_DIR = Path(os.environ.get("GMAILTOOLS_CONFIG_DIR", Path.home() / ".config" / "gmailtools"))
-TOKEN_PATH = CONFIG_DIR / "token.json"
-PASS_ENTRY = os.environ.get("GMAILTOOLS_PASS_ENTRY", "gmailtools/credentials")
+CLIENT_PASS_ENTRY = os.environ.get("GMAILTOOLS_PASS_ENTRY", "gmailtools/credentials")
+TOKEN_PASS_ENTRY = os.environ.get("GMAILTOOLS_TOKEN_PASS_ENTRY", "gmailtools/token")
 
 
-def _ensure_config_dir() -> None:
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    os.chmod(CONFIG_DIR, 0o700)
+def _pass_show(entry: str) -> bytes | None:
+    """Return decrypted content, or None if the entry doesn't exist in the store."""
+    try:
+        return subprocess.check_output(["pass", "show", entry], stderr=subprocess.PIPE)
+    except FileNotFoundError as e:
+        raise SystemExit(
+            "`pass` not found on PATH. Install pass and store the OAuth entries "
+            "(see README)."
+        ) from e
+    except subprocess.CalledProcessError as e:
+        msg = e.stderr.decode("utf-8", "replace")
+        if "is not in the password store" in msg:
+            return None
+        raise SystemExit(
+            f"`pass show {entry}` failed: {msg.strip() or f'exit {e.returncode}'}"
+        ) from e
+
+
+def _pass_insert(entry: str, data: bytes) -> None:
+    """Overwrite the entry with `data` (encrypted to the store's gpg recipient)."""
+    try:
+        subprocess.run(
+            ["pass", "insert", "-m", "-f", entry],
+            input=data,
+            check=True,
+            stderr=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+        )
+    except FileNotFoundError as e:
+        raise SystemExit("`pass` not found on PATH.") from e
+    except subprocess.CalledProcessError as e:
+        msg = e.stderr.decode("utf-8", "replace").strip() or f"exit {e.returncode}"
+        raise SystemExit(f"`pass insert {entry}` failed: {msg}") from e
 
 
 def _load_token() -> Credentials | None:
-    if not TOKEN_PATH.exists():
+    out = _pass_show(TOKEN_PASS_ENTRY)
+    if out is None:
         return None
-    return Credentials.from_authorized_user_file(str(TOKEN_PATH), SCOPES)
+    return Credentials.from_authorized_user_info(json.loads(out), SCOPES)
 
 
 def _save_token(creds: Credentials) -> None:
-    _ensure_config_dir()
-    TOKEN_PATH.write_text(creds.to_json())
-    os.chmod(TOKEN_PATH, 0o600)
+    _pass_insert(TOKEN_PASS_ENTRY, creds.to_json().encode())
 
 
 def _load_client_config() -> dict[str, Any]:
-    """Decrypt the OAuth client JSON via `pass show` (gpg-agent will prompt)."""
-    try:
-        out = subprocess.check_output(["pass", "show", PASS_ENTRY], stderr=subprocess.PIPE)
-    except FileNotFoundError as e:
+    out = _pass_show(CLIENT_PASS_ENTRY)
+    if out is None:
         raise SystemExit(
-            "`pass` not found on PATH. Install pass and store the OAuth client as "
-            f"'{PASS_ENTRY}' (see README)."
-        ) from e
-    except subprocess.CalledProcessError as e:
-        msg = e.stderr.decode("utf-8", "replace").strip() or f"exit {e.returncode}"
-        raise SystemExit(f"`pass show {PASS_ENTRY}` failed: {msg}") from e
+            f"OAuth client not found in pass under '{CLIENT_PASS_ENTRY}'. See README."
+        )
     return json.loads(out)
 
 

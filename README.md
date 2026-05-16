@@ -14,19 +14,26 @@ API enablement and the OAuth client we register inside it. **OAuth
 your Google password, you grant it a scoped, revocable token through a
 Google-hosted consent page.
 
-Access is brokered by two artifacts:
+Access is brokered by two artifacts, **both encrypted in `pass`**;
+nothing sensitive lives on disk plaintext:
 
-- **OAuth client** — identifies the app. Registered once in Google
-  Cloud Console as a **Desktop** client (loopback redirect
-  `http://localhost:<port>`, no web server). The downloaded JSON is
-  stored encrypted in **`pass`** under the entry `gmailtools/credentials`;
-  `gmt` reads it at runtime via `pass show`, which decrypts through
-  gpg-agent (pinentry passphrase prompt). Plaintext never lands on disk.
-  Override the entry name with `$GMAILTOOLS_PASS_ENTRY`.
-- **Refresh token** — identifies the app acting on *your* mailbox.
-  Written to `~/.config/gmailtools/token.json` (mode `0600`, dir `0700`,
-  outside the repo) after the first browser consent. Auto-refreshed
-  thereafter; no re-consent needed within the token's validity window.
+- **OAuth client** (`pass` entry `gmailtools/credentials`) — identifies
+  the app. Registered once in Google Cloud Console as a **Desktop**
+  client (loopback redirect `http://localhost:<port>`, no web server).
+  Read only on first consent.
+- **Token bundle** (`pass` entry `gmailtools/token`) — identifies the
+  app acting on *your* mailbox. Contains refresh_token, current
+  access_token, scopes, and (mirrored by the Google library)
+  client_id/client_secret. Written after first consent; rewritten on
+  every access-token refresh.
+
+Both entries are read via `pass show`, which decrypts through
+gpg-agent. With `default-cache-ttl 0` set in `~/.gnupg/gpg-agent.conf`,
+every read triggers a pinentry passphrase prompt — including each
+`gmt` invocation. Trading convenience for the guarantee that no
+on-disk file alone is enough to access your mailbox. Override entry
+names with `$GMAILTOOLS_PASS_ENTRY` (client) and
+`$GMAILTOOLS_TOKEN_PASS_ENTRY` (token).
 
 Scope is **`gmail.modify` only** — read, label, archive, trash.
 Permanent delete (`mail.google.com`) is deliberately not requested:
@@ -41,7 +48,8 @@ the flow. For personal use that's just yourself.
 If the client secret leaks: delete the client in Cloud Console →
 Clients, create a fresh one, update the `pass` entry
 (`pass insert -m gmailtools/credentials < new-client.json`),
-`rm ~/.config/gmailtools/token.json`, re-run to re-consent.
+remove the stale token entry
+(`pass rm gmailtools/token`), and re-run to re-consent.
 
 ## Install and run
 
