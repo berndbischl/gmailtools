@@ -19,3 +19,36 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/gmailtools"]
+
+[tool.ruff]
+# Match the project's minimum Python (see `requires-python` above).
+target-version = "py311"
+line-length = 100
+extend-exclude = ["build", "dist"]
+
+[tool.ruff.lint]
+# E/F = pycodestyle + pyflakes (the PEP 8 baseline).
+# I    = import ordering (replaces isort).
+# UP   = pyupgrade — flag syntax that's outdated for our target Python.
+# B    = bugbear — likely-bug patterns the standard linters miss.
+# SIM  = simplifications.
+# RUF  = ruff-native rules.
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.ruff.format]
+# Defaults are Black-compatible; pinned here so editor + CLI agree.
+quote-style = "double"
+indent-style = "space"
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+# Google's untyped-library imports (googleapiclient, google.auth) ship
+# without complete stubs — silence the noise rather than weaken `strict`.
+[[tool.mypy.overrides]]
+module = [
+    "googleapiclient.*",
+    "google_auth_oauthlib.*",
+    "google.auth.*",
+]
+ignore_missing_imports = true
