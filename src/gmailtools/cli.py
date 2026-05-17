@@ -7,10 +7,27 @@ actually run. Queries use Gmail's standard search syntax
 
 from __future__ import annotations
 
+import re
+from collections import Counter
+
 import click
 import typer
 
 from . import auth, client
+
+
+_EMAIL_RE = re.compile(r"<([^>]+)>")
+
+
+def _extract_email(from_value: str) -> str:
+    """Pull just the address out of a From: header value, lowercased.
+
+    Handles `"Name" <addr@host>`, `Name <addr@host>`, and bare `addr@host`.
+    """
+    m = _EMAIL_RE.search(from_value)
+    if m:
+        return m.group(1).strip().lower()
+    return from_value.strip().lower()
 
 
 def _batch_modify_with_progress(
@@ -79,9 +96,76 @@ def labels() -> None:
         typer.echo(f"{lbl['id']:20} {lbl['name']}")
 
 
+@app.command("top-senders")
+def top_senders(
+    query: str = typer.Option(
+        "", "--query", "-q", help="Scope (Gmail search). Default: all mail."
+    ),
+    limit: int = typer.Option(20, help="Show top N senders."),
+    by_domain: bool = typer.Option(
+        False, "--by-domain", help="Group by domain (e.g. example.com) instead of full address."
+    ),
+    cap: int | None = typer.Option(
+        None, help="Cap messages scanned (for cheap previews)."
+    ),
+) -> None:
+    """Count messages by `From:` address (or domain). Read-only.
+
+    Fetches headers in HTTP batches of 100. ~5 quota units per message,
+    ~250 quota units / user / second rate limit → roughly 50 msg/sec wall.
+    """
+    svc = auth.service()
+    ids = list(client.search_message_ids(svc, query, max_results=cap))
+    if not ids:
+        typer.echo("no messages match.")
+        return
+    typer.echo(f"scanning {len(ids):,} message(s)...")
+    counts: Counter[str] = Counter()
+    n_batches = (len(ids) + 99) // 100
+    with click.progressbar(length=n_batches, label="fetching headers") as bar:
+        for _mid, frm in client.iter_from_headers(svc, ids, progress=lambda: bar.update(1)):
+            addr = _extract_email(frm) or "(unknown)"
+            if by_domain and "@" in addr:
+                addr = addr.split("@", 1)[1]
+            counts[addr] += 1
+
+    typer.echo(f"\ntop {min(limit, len(counts))} of {len(counts):,} unique senders:")
+    for addr, n in counts.most_common(limit):
+        typer.echo(f"  {n:>6,}  {addr}")
+
+
+@app.command()
+def categories() -> None:
+    """Per-category message counts (Gmail's Primary/Social/Promotions/etc. tabs)."""
+    from googleapiclient.errors import HttpError
+
+    svc = auth.service()
+    for lid, display in _CATEGORY_LABELS:
+        try:
+            lbl = client.get_label(svc, lid)
+        except HttpError as e:
+            # Categories can be absent on accounts that disabled tabbed inbox.
+            if e.resp.status == 404:
+                typer.echo(f"  {display:12} (not enabled)")
+                continue
+            raise
+        total = int(lbl.get("messagesTotal", 0))
+        unread = int(lbl.get("messagesUnread", 0))
+        typer.echo(f"  {display:12} total {total:>8,}   unread {unread:>6,}")
+
+
 # System labels worth surfacing in the overview. Gmail also exposes
 # CATEGORY_* and CHAT, but those are noise for an account summary.
 _OVERVIEW_SYSTEM_LABELS = ["INBOX", "UNREAD", "STARRED", "IMPORTANT", "SENT", "DRAFT", "SPAM", "TRASH"]
+
+# Gmail's auto-categorization labels (the Primary/Social/etc. tabs).
+_CATEGORY_LABELS = [
+    ("CATEGORY_PERSONAL", "Primary"),
+    ("CATEGORY_SOCIAL", "Social"),
+    ("CATEGORY_PROMOTIONS", "Promotions"),
+    ("CATEGORY_UPDATES", "Updates"),
+    ("CATEGORY_FORUMS", "Forums"),
+]
 
 
 @app.command()

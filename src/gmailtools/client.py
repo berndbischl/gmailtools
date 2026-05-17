@@ -111,3 +111,43 @@ def trash_messages(
         svc.users().messages().trash(userId=USER, id=mid).execute()
         if progress:
             progress()
+
+
+def iter_from_headers(
+    svc: Resource,
+    ids: list[str],
+    batch_size: int = 100,
+    progress: Callable[[], None] | None = None,
+) -> Iterator[tuple[str, str]]:
+    """Yield (id, From-header-value) for each id; one Gmail HTTP batch per chunk.
+
+    Quota is still 5 units per message (HTTP batching only saves round-trips,
+    not units). `progress` fires once per completed batch.
+    """
+    results: dict[str, str] = {}
+
+    def _cb(request_id: str, response: Any, exception: Any) -> None:
+        if exception is not None:
+            results[request_id] = ""
+            return
+        for h in response.get("payload", {}).get("headers", []):
+            if h.get("name", "").lower() == "from":
+                results[request_id] = h.get("value", "")
+                return
+        results[request_id] = ""
+
+    for start in range(0, len(ids), batch_size):
+        chunk = ids[start : start + batch_size]
+        batch = svc.new_batch_http_request(callback=_cb)
+        for mid in chunk:
+            batch.add(
+                svc.users().messages().get(
+                    userId=USER, id=mid, format="metadata", metadataHeaders=["From"]
+                ),
+                request_id=mid,
+            )
+        batch.execute()
+        if progress:
+            progress()
+        for mid in chunk:
+            yield mid, results.pop(mid, "")
